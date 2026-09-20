@@ -1,18 +1,18 @@
 {
 	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
 	"type": "connection",
-	"id": "your-module-name",
-	"name": "your-module-name",
-	"shortname": "module-shortname",
-	"description": "A short one line description of your module",
-	"version": "0.0.0",
-	"license": "MIT",
-	"repository": "git+https://github.com/bitfocus/companion-module-your-module-name.git",
-	"bugs": "https://github.com/bitfocus/companion-module-your-module-name/issues",
+	"id": "stageaudioworks-obs-multisite",
+	"name": "stageaudioworks-obs-multisite",
+	"shortname": "obs-multisite",
+	"description": "Control a Multisite broadcast from a Stream Deck: go live and drop markers at the main site, and drive a campus feed's timeslipping — against OBS or a campus player appliance.",
+	"version": "0.3.1",
+	"license": "GPL-3.0-only",
+	"repository": "git+https://github.com/bitfocus/companion-module-stageaudioworks-obs-multisite.git",
+	"bugs": "https://github.com/bitfocus/companion-module-stageaudioworks-obs-multisite/issues",
 	"maintainers": [
 		{
-			"name": "Your name",
-			"email": "Your email"
+			"name": "Stage Audio Works",
+			"email": "info@stageaudioworks.com"
 		}
 	],
 	"runtime": {
@@ -21,8 +21,8 @@
 		"apiVersion": "0.0.0",
 		"entrypoint": "../dist/main.js"
 	},
-	"legacyIds": [],
-	"manufacturer": "Your company",
-	"products": ["Your product"],
-	"keywords": []
+	"legacyIds": ["obs-multisite"],
+	"manufacturer": "Stage Audio Works",
+	"products": ["obs-multisite"],
+	"keywords": ["obs", "multisite", "church", "broadcast", "video", "stream"]
 }
