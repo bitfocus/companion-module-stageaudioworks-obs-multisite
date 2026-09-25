@@ -2,6 +2,12 @@
 
 All notable changes to this module are recorded here.
 
+## [0.3.2]
+
+- **Packaging only, for the Companion module store.** `companion/manifest.json`
+  now carries version `0.0.0`; the build takes the real version from
+  `package.json`. No change to actions or behaviour.
+
 ## [0.3.1]
 
 - **A campus can drop a cue.** New **Campus: Drop a cue** action, with a name of

@@ -5,7 +5,7 @@
 	"name": "stageaudioworks-obs-multisite",
 	"shortname": "obs-multisite",
 	"description": "Control a Multisite broadcast from a Stream Deck: go live and drop markers at the main site, and drive a campus feed's timeslipping — against OBS or a campus player appliance.",
-	"version": "0.3.1",
+	"version": "0.0.0",
 	"license": "GPL-3.0-only",
 	"repository": "git+https://github.com/bitfocus/companion-module-stageaudioworks-obs-multisite.git",
 	"bugs": "https://github.com/bitfocus/companion-module-stageaudioworks-obs-multisite/issues",
@@ -21,7 +21,7 @@
 		"apiVersion": "0.0.0",
 		"entrypoint": "../dist/main.js"
 	},
-	"legacyIds": ["obs-multisite"],
+	"legacyIds": [],
 	"manufacturer": "Stage Audio Works",
 	"products": ["obs-multisite"],
 	"keywords": ["obs", "multisite", "church", "broadcast", "video", "stream"]
