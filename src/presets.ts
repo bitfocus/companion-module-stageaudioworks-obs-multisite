@@ -69,6 +69,33 @@ export function UpdatePresets(self: ModuleInstance): void {
 		feedbacks: [{ feedbackId: 'checking_input', options: {}, style: { bgcolor: 0x0066cc, color: 0xffffff } }],
 	}
 
+	// An Outpost encoder's schedule: the next service counting down, amber
+	// within ten minutes and green while one runs; and skipping it.
+	presets['schedule_next'] = {
+		type: 'simple',
+		name: 'Schedule: the next service',
+		style: {
+			text: 'NEXT\\n$(obs-multisite:schedule_next_in)',
+			size: 'auto',
+			color: 0xffffff,
+			bgcolor: 0x333333,
+			show_topbar: false,
+		},
+		steps: [{ down: [], up: [] }],
+		feedbacks: [
+			{ feedbackId: 'schedule_soon', options: { minutes: 10 }, style: { bgcolor: 0xff9900, color: 0x000000 } },
+			{ feedbackId: 'schedule_running', options: {}, style: { bgcolor: 0x00aa00, color: 0xffffff } },
+		],
+	}
+
+	presets['schedule_skip'] = {
+		type: 'simple',
+		name: 'Schedule: skip the next service',
+		style: style('SKIP\\nNEXT', 0x333333),
+		steps: [{ down: [{ actionId: 'schedule_skip', options: { mode: 'toggle' } }], up: [] }],
+		feedbacks: [{ feedbackId: 'schedule_skipped', options: {}, style: { bgcolor: 0x663399, color: 0xffffff } }],
+	}
+
 	presets['encoder_web_landing'] = {
 		type: 'simple',
 		name: 'Encoder: the web stream is landing',
@@ -274,6 +301,13 @@ export function UpdatePresets(self: ModuleInstance): void {
 				description: 'Check the input without recording, and whether the web stream and the sound are arriving.',
 				presets: ['encoder_check_input', 'encoder_web_landing', 'encoder_sound'],
 			})
+			encoderGroups.push({
+				id: 'encoder_schedule',
+				type: 'simple',
+				name: 'Schedule',
+				description: 'The next service on the box’s schedule counting down, and a button to skip it.',
+				presets: ['schedule_next', 'schedule_skip'],
+			})
 		}
 		if (encoderLabels.length > 0) {
 			encoderGroups.push({
@@ -351,6 +385,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 	for (const id of Object.keys(presets)) {
 		const drop =
 			(id.startsWith('encoder_') && !self.offersEncoder) ||
+			(id.startsWith('schedule_') && !self.offersSchedule) ||
 			(['encoder_check_input', 'encoder_web_landing', 'encoder_sound'].includes(id) && !self.isOutpost) ||
 			(id.startsWith('decoder_') && !self.offersDecoder) ||
 			(['decoder_toggle', 'decoder_lock'].includes(id) && !self.offersPlayerOnly)

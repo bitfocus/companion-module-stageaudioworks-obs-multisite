@@ -15,13 +15,18 @@
 // the page's own list.
 //
 // Nothing is pushed. The current shape's status is polled once a second, as a
-// campus player's is; the box's own state (its shape, its temperature) every
-// five seconds, since a box that changes shape is a box someone is setting up,
-// not one in a service.
+// campus player's is; the box's own state (its shape, its temperature, and an
+// encoder's schedule) every five seconds, since a box that changes shape is a
+// box someone is setting up, not one in a service. The schedule's countdown
+// is worked out here from the next start, so five seconds is plenty.
+//
+// Skipping the next scheduled service is the one control outside /api/player
+// and /api/encoder; the page opened it to operators in MultisiteOS 0.2.69. An
+// older box answers it with 403 and the PIN, and the button says to update.
 //
 import type { JsonObject } from '@companion-module/base'
 
-import { asJsonObject, type BoxShape, type BoxSystem, type EncoderStatus } from './types.js'
+import { asJsonObject, type BoxSchedule, type BoxShape, type BoxSystem, type EncoderStatus } from './types.js'
 import type { Transport, TransportEvents } from './transport.js'
 import { ROUTES as PLAYER_ROUTES, type Route } from './transport-appliance.js'
 
@@ -48,7 +53,18 @@ const BOX_ROUTES: Record<string, Route> = {
 	'box/system': { method: 'GET', path: '/api/system' },
 }
 
-const ROUTES: Record<string, Route> = { ...DECODER_ROUTES, ...ENCODER_ROUTES, ...BOX_ROUTES }
+/** An encoder's schedule. The skip takes its `skip` as a JSON body, not a query. */
+const SCHEDULE_ROUTES: Record<string, Route & { json?: boolean }> = {
+	'schedule/read': { method: 'GET', path: '/api/schedule' },
+	'schedule/skip': { method: 'POST', path: '/api/schedule/skip', json: true },
+}
+
+const ROUTES: Record<string, Route & { json?: boolean }> = {
+	...DECODER_ROUTES,
+	...ENCODER_ROUTES,
+	...BOX_ROUTES,
+	...SCHEDULE_ROUTES,
+}
 
 /**
  * Commands this module has that an Outpost cannot do yet, and why, so the
@@ -67,6 +83,7 @@ export interface OutpostRequest {
 	method: 'GET' | 'POST'
 	path: string
 	query: Record<string, string>
+	body?: string
 }
 
 /**
@@ -76,6 +93,7 @@ export interface OutpostRequest {
 export function outpostRequest(operation: string, params: JsonObject = {}): OutpostRequest | { refused: string } {
 	const route = ROUTES[operation]
 	if (!route) return { refused: NOT_YET[operation] ?? `${operation} is not something an Outpost box can do` }
+	if (route.json) return { method: route.method, path: route.path, query: {}, body: JSON.stringify(params) }
 	const query: Record<string, string> = {}
 	for (const [ours, theirs] of Object.entries(route.query ?? {})) {
 		const value = params[ours]
@@ -137,6 +155,31 @@ export function normaliseOutpostEncoder(raw: JsonObject): EncoderStatus & JsonOb
 	}
 }
 
+/**
+ * The schedule's summary as a button needs it, or null from a box without a
+ * schedule (one from before MultisiteOS 0.2.45 answers 404).
+ */
+export function parseSchedule(raw: JsonObject): BoxSchedule | null {
+	if (typeof raw.error === 'string') return null
+	const summary = asJsonObject(raw.summary)
+	if (!('next' in summary)) return null
+	const next = asJsonObject(summary.next)
+	const now = asJsonObject(summary.now)
+	const text = (value: unknown) => (typeof value === 'string' ? value : '')
+	return {
+		next:
+			typeof next.start_unix === 'number'
+				? { name: text(next.name), start: text(next.start), start_unix: next.start_unix }
+				: null,
+		// `until` is "Sun 11 Oct 12:15"; on a button running now, the time is enough.
+		now:
+			typeof now.until_unix === 'number'
+				? { name: text(now.name), until: text(now.until).split(' ').pop() ?? '', until_unix: now.until_unix }
+				: null,
+		skipping: text(summary.skipping),
+	}
+}
+
 function safeJson(text: string): unknown {
 	try {
 		return JSON.parse(text)
@@ -158,6 +201,8 @@ export class OutpostTransport implements Transport {
 	shape: BoxShape = ''
 	/** The box's CPU, memory and temperature, when its page has them. */
 	system: BoxSystem | null = null
+	/** An encoder's schedule; null for a decoder, or a box without one. */
+	schedule: BoxSchedule | null = null
 
 	private readonly events: TransportEvents
 	private readonly boxPollMs: number
@@ -196,6 +241,7 @@ export class OutpostTransport implements Transport {
 		this.up = true
 		this.takeBoxState(state)
 		void this.readSystem()
+		void this.readSchedule()
 		this.boxTimer = setInterval(() => void this.readBox(), this.boxPollMs)
 		this.events.onConnected()
 	}
@@ -216,8 +262,22 @@ export class OutpostTransport implements Transport {
 		const shape: BoxShape = state.shape === 'encoder' ? 'encoder' : 'decoder'
 		if (shape !== this.shape) {
 			this.shape = shape
+			this.schedule = null
 			this.events.onShapeChanged?.()
 		}
+	}
+
+	private takeSchedule(raw: JsonObject): void {
+		const next = parseSchedule(raw)
+		if (JSON.stringify(next) !== JSON.stringify(this.schedule)) {
+			this.schedule = next
+			this.events.onBoxInfo?.()
+		}
+	}
+
+	private async readSchedule(): Promise<void> {
+		if (this.shape !== 'encoder') return
+		this.takeSchedule(await this.call('schedule/read'))
 	}
 
 	private async readSystem(): Promise<void> {
@@ -245,6 +305,7 @@ export class OutpostTransport implements Transport {
 		if (typeof state.error === 'string' || typeof state.shape !== 'string') return
 		this.takeBoxState(state)
 		await this.readSystem()
+		await this.readSchedule()
 	}
 
 	async call(operation: string, params: JsonObject = {}): Promise<JsonObject> {
@@ -255,10 +316,17 @@ export class OutpostTransport implements Transport {
 		const url = this.base + request.path + (query ? `?${query}` : '')
 
 		try {
-			const res = await fetch(url, { method: request.method, signal: AbortSignal.timeout(5000) })
+			const res = await fetch(url, {
+				method: request.method,
+				signal: AbortSignal.timeout(5000),
+				...(request.body !== undefined ? { body: request.body, headers: { 'Content-Type': 'application/json' } } : {}),
+			})
 			let body = asJsonObject(safeJson(await res.text()))
 			if (res.status === 409 && body.locked === true) {
 				return { ...body, error: 'the controls are locked on the box' }
+			}
+			if (res.status === 403 && body.pin_required === true && operation === 'schedule/skip') {
+				return { ...body, error: 'the box wants its PIN to skip: update the box to skip from here' }
 			}
 			if (res.status === 403 && body.pin_required === true) {
 				// Only a setup route is gated, and this module calls none: seeing
@@ -269,6 +337,8 @@ export class OutpostTransport implements Transport {
 				return { ...body, error: typeof body.error === 'string' ? body.error : `the box answered ${res.status}` }
 			}
 			if (operation.startsWith('encoder/')) body = normaliseOutpostEncoder(body)
+			// The skip answers with the whole schedule: the button shows it now.
+			if (operation === 'schedule/skip') this.takeSchedule(body)
 			return body
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error)

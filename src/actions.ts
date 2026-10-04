@@ -23,6 +23,7 @@ export type ActionsSchema = {
 	encoder_end: { options: NoOptions }
 	encoder_marker: { options: { label: string } }
 	encoder_check_input: { options: { mode: string } }
+	schedule_skip: { options: { mode: string } }
 	decoder_play: { options: NoOptions }
 	decoder_stop: { options: NoOptions }
 	decoder_hold: { options: NoOptions }
@@ -159,6 +160,31 @@ export function UpdateActions(self: ModuleInstance): void {
 				const checking = self.encoderStatus.state === 'checking'
 				const stop = mode === 'stop' || (mode === 'toggle' && checking)
 				await self.command(stop ? 'encoder/check-stop' : 'encoder/check-start', {}, 'encoder')
+			},
+		},
+
+		schedule_skip: {
+			name: 'Schedule: Skip the next service',
+			description:
+				'The box’s own schedule will not start the next service. Changing the service times stays on the box’s page. ' +
+				'Needs MultisiteOS 0.2.69 or later.',
+			options: [
+				{
+					id: 'mode',
+					type: 'dropdown',
+					label: 'Do',
+					default: 'toggle',
+					choices: [
+						{ id: 'toggle', label: 'Skip it, or undo the skip if there is one' },
+						{ id: 'skip', label: 'Skip the next service' },
+						{ id: 'undo', label: 'Undo the skip' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const mode = String(event.options.mode ?? 'toggle')
+				const skipped = (self.schedule?.skipping ?? '') !== ''
+				await self.skipNextService(mode === 'skip' || (mode === 'toggle' && !skipped))
 			},
 		},
 
@@ -470,6 +496,7 @@ export function UpdateActions(self: ModuleInstance): void {
 		actions.encoder_marker = undefined
 	}
 	if (!(self.isOutpost && self.offersEncoder)) actions.encoder_check_input = undefined
+	if (!self.offersSchedule) actions.schedule_skip = undefined
 	if (!self.offersDecoder) {
 		const all = actions as Record<string, unknown>
 		for (const id of Object.keys(all)) if (id.startsWith('decoder_')) all[id] = undefined

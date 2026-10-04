@@ -2,6 +2,17 @@
 
 All notable changes to this module are recorded here.
 
+## [0.5.0]
+
+- **The schedule, on an Outpost encoder.** A **Schedule: Skip the next
+  service** action (skip, undo, or toggle); feedbacks for a scheduled service
+  running, the next one starting within N minutes, and the next one being
+  skipped; variables for the next service, the time until it, the one running
+  now and the one skipped; and a **Schedule** preset group with a countdown
+  button and a Skip next button. Read without the box's PIN. Skipping needs
+  MultisiteOS 0.2.69, which opened it to operators; an older box refuses it
+  and the log says to update the box.
+
 ## [0.4.0]
 
 - **Outpost boxes.** A third connection type, **Outpost (MultisiteOS)**, drives

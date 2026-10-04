@@ -12,7 +12,13 @@ import type { AddressInfo } from 'node:net'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { normaliseOutpostEncoder, outpostOperations, outpostRequest, OutpostTransport } from './transport-outpost.js'
+import {
+	normaliseOutpostEncoder,
+	outpostOperations,
+	outpostRequest,
+	OutpostTransport,
+	parseSchedule,
+} from './transport-outpost.js'
 
 // multisite-os appliance/ui/server.py: OPERATOR_PLAYER and OPERATOR_ENCODER,
 // the POSTs the page takes without the PIN. Copied, not imported: the page is
@@ -35,6 +41,8 @@ const OPERATOR_PLAYER = [
 	'events/refresh',
 ]
 const OPERATOR_ENCODER = ['start', 'stop', 'check/start', 'check/stop']
+// And OPERATOR_PATHS, whole paths: skipping the next scheduled service (0.2.69).
+const OPERATOR_PATHS = ['/api/schedule/skip']
 
 describe('outpostRequest', () => {
 	it('sends the player’s routes through the page, under /api/player', () => {
@@ -91,19 +99,85 @@ describe('outpostRequest', () => {
 			const encoder = req.path.match(/^\/api\/encoder\/(.+)$/)
 			if (player) expect(OPERATOR_PLAYER, op).toContain(player[1])
 			else if (encoder) expect(OPERATOR_ENCODER, op).toContain(encoder[1])
-			else expect.fail(`${op} posts to ${req.path}, which is neither the player's nor the encoder's`)
+			else expect(OPERATOR_PATHS, op).toContain(req.path)
 		}
 	})
 
-	it('reads only status, events, the box’s state and its readings', () => {
+	it('skips the next service with a JSON body, as the page reads it', () => {
+		expect(outpostRequest('schedule/skip', { skip: true })).toEqual({
+			method: 'POST',
+			path: '/api/schedule/skip',
+			query: {},
+			body: '{"skip":true}',
+		})
+		expect(outpostRequest('schedule/skip', { skip: false })).toMatchObject({ body: '{"skip":false}' })
+	})
+
+	it('reads only status, events, the box’s state, its readings and its schedule', () => {
 		const gets = outpostOperations()
 			.map((op) => outpostRequest(op))
 			.filter((r) => !('refused' in r) && r.method === 'GET')
 			.map((r) => ('path' in r ? r.path : ''))
 			.sort()
 		expect(gets).toEqual(
-			['/api/encoder/status', '/api/player/events', '/api/player/status', '/api/state', '/api/system'].sort(),
+			[
+				'/api/encoder/status',
+				'/api/player/events',
+				'/api/player/status',
+				'/api/schedule',
+				'/api/state',
+				'/api/system',
+			].sort(),
 		)
+	})
+})
+
+// multisite-os appliance/ui/schedule.py describe(), as /api/schedule's "summary".
+const SUMMARY = {
+	timezone: 'Europe/London',
+	now: null,
+	next: {
+		key: 'local-0-1030 2026-10-11T10:30',
+		name: 'Sunday Service',
+		source: 'local',
+		start: 'Sun 11 Oct 10:30',
+		stop: '12:15',
+		start_unix: 1_791_970_200,
+		in: '6d 1h',
+	},
+	skipping: null,
+	local_time: '09:12',
+	local_date: 'Mon 05 Oct',
+}
+
+describe('parseSchedule', () => {
+	it('takes the next service, the one running and the skip from the summary', () => {
+		expect(parseSchedule({ summary: SUMMARY })).toEqual({
+			next: { name: 'Sunday Service', start: 'Sun 11 Oct 10:30', start_unix: 1_791_970_200 },
+			now: null,
+			skipping: '',
+		})
+		const running = {
+			...SUMMARY,
+			now: {
+				key: 'k',
+				name: '',
+				source: 'cloud',
+				until: 'Sun 11 Oct 12:15',
+				until_unix: 1_791_976_500,
+				left: '1h 45m',
+			},
+			skipping: 'Evening, Sun 11 Oct 18:00',
+		}
+		expect(parseSchedule({ summary: running })).toMatchObject({
+			now: { name: '', until: '12:15', until_unix: 1_791_976_500 },
+			skipping: 'Evening, Sun 11 Oct 18:00',
+		})
+	})
+
+	it('has nothing from a box without a schedule, or nothing scheduled', () => {
+		expect(parseSchedule({ error: 'no such endpoint' })).toBeNull()
+		expect(parseSchedule({ summary: { ...SUMMARY, next: null } })).toEqual({ next: null, now: null, skipping: '' })
 	})
 })
 
@@ -153,6 +227,10 @@ interface FakeBox {
 	shape: 'decoder' | 'encoder'
 	locked: boolean
 	seen: string[]
+	/** undefined: a box from before the schedule (404). */
+	skip?: string | null
+	/** A box from before 0.2.69, which wants the PIN for a skip. */
+	skipNeedsPin?: boolean
 }
 
 function page(box: FakeBox) {
@@ -171,6 +249,18 @@ function page(box: FakeBox) {
 		if (path === '/api/player/hold') {
 			if (box.locked) return send(409, { error: 'this box is locked', locked: true })
 			return send(200, { playing: true, paused: true })
+		}
+		const schedule = () => ({ summary: { ...SUMMARY, skipping: box.skip ?? null } })
+		if (path === '/api/schedule' && box.skip !== undefined) return send(200, schedule())
+		if (path === '/api/schedule/skip' && box.skip !== undefined) {
+			if (box.skipNeedsPin) return send(403, { error: 'setup is locked', pin_required: true })
+			let body = ''
+			req.on('data', (c) => (body += c))
+			req.on('end', () => {
+				box.skip = JSON.parse(body).skip ? 'Sunday Service, Sun 11 Oct 10:30' : null
+				send(200, schedule())
+			})
+			return
 		}
 		if (path === '/api/encoder/start')
 			return send(200, { state: 'recording', mode: 'multisite', upload: { configured: true, room_id: 'main' } })
@@ -231,6 +321,53 @@ describe('OutpostTransport', () => {
 		expect([t.hasDecoderHalf, t.hasEncoderHalf, log.shapes]).toEqual([false, true, 2])
 		await until(() => t.system !== null)
 		expect(t.system).toEqual({ cpu: 4, temp_c: 68, throttle_c: 75, throttling: false })
+	})
+
+	it('reads an encoder’s schedule, and a skip shows at once', async () => {
+		const box: FakeBox = { shape: 'encoder', locked: false, seen: [], skip: null }
+		const server = createServer(page(box))
+		servers.push(server)
+		const { t, log } = start()
+		await t.connect('127.0.0.1', await listen(server))
+		await until(() => t.schedule !== null)
+		expect(t.schedule?.next?.name).toBe('Sunday Service')
+
+		const before = log.info
+		const res = await t.call('schedule/skip', { skip: true })
+		expect(res.error).toBeUndefined()
+		expect(t.schedule?.skipping).toBe('Sunday Service, Sun 11 Oct 10:30')
+		expect(log.info).toBeGreaterThan(before)
+	})
+
+	it('does not read a schedule a decoder does not have', async () => {
+		const box: FakeBox = { shape: 'decoder', locked: false, seen: [], skip: null }
+		const server = createServer(page(box))
+		servers.push(server)
+		const { t } = start()
+		await t.connect('127.0.0.1', await listen(server))
+		await until(() => t.system !== null)
+		await new Promise((r) => setTimeout(r, 80))
+		expect([t.schedule, box.seen.some((s) => s.includes('/api/schedule'))]).toEqual([null, false])
+	})
+
+	it('has no schedule from a box too old for one', async () => {
+		const box: FakeBox = { shape: 'encoder', locked: false, seen: [] }
+		const server = createServer(page(box))
+		servers.push(server)
+		const { t } = start()
+		await t.connect('127.0.0.1', await listen(server))
+		await until(() => box.seen.includes('GET /api/schedule'))
+		expect(t.schedule).toBeNull()
+	})
+
+	it('says to update a box that wants its PIN for a skip', async () => {
+		const box: FakeBox = { shape: 'encoder', locked: false, seen: [], skip: null, skipNeedsPin: true }
+		const server = createServer(page(box))
+		servers.push(server)
+		const { t } = start()
+		await t.connect('127.0.0.1', await listen(server))
+		const res = await t.call('schedule/skip', { skip: true })
+		expect(res.error).toMatch(/update the box/)
 	})
 
 	it('answers a locked player’s 409 in words', async () => {

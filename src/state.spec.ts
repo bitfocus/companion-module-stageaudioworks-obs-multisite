@@ -11,6 +11,7 @@ import {
 	eventStateText,
 	formatBytes,
 	formatClockTime,
+	formatCountdown,
 	formatDuration,
 	formatRate,
 	linkHealthText,
@@ -100,5 +101,17 @@ describe('formatRate', () => {
 
 	it('is blank rather than "0 B/s" when there is no sample', () => {
 		expect(formatRate(undefined)).toBe('')
+	})
+})
+
+describe('formatCountdown', () => {
+	it('counts down in minutes and seconds, then hours, then days', () => {
+		expect(formatCountdown(724)).toBe('12:04')
+		expect(formatCountdown(3735)).toBe('1:02:15')
+		expect(formatCountdown(26 * 3600 + 5 * 60)).toBe('1d 2h')
+	})
+	it('stops at zero, and is blank with nothing to count to', () => {
+		expect(formatCountdown(-5)).toBe('0:00')
+		expect(formatCountdown(undefined)).toBe('')
 	})
 })

@@ -16,7 +16,15 @@
 import type { CompanionVariableValues } from '@companion-module/base'
 
 import type ModuleInstance from './main.js'
-import { formatBytes, formatClockTime, formatDuration, formatRate, linkHealthText, roomStateText } from './state.js'
+import {
+	formatBytes,
+	formatClockTime,
+	formatCountdown,
+	formatDuration,
+	formatRate,
+	linkHealthText,
+	roomStateText,
+} from './state.js'
 
 function yesNo(value: boolean | undefined): string {
 	return value ? 'yes' : 'no'
@@ -41,6 +49,7 @@ function dropAbsent(self: ModuleInstance, values: Record<string, unknown>): void
 		else if (key.startsWith('decoder_') && !self.offersDecoder) delete values[key]
 		else if (OUTPOST_ENCODER.includes(key) && !self.isOutpost) delete values[key]
 		else if (OUTPOST_BOX.includes(key) && !self.isOutpost) delete values[key]
+		else if (key.startsWith('schedule_') && !self.offersSchedule) delete values[key]
 	}
 }
 
@@ -70,6 +79,10 @@ export function UpdateVariables(self: ModuleInstance): void {
 		// An Outpost box's own.
 		shape: { name: 'Outpost — shape (decoder / encoder)' },
 		temperature: { name: 'Outpost — temperature (°C)' },
+		schedule_next: { name: 'Schedule — the next service (name, day and time)' },
+		schedule_next_in: { name: 'Schedule — time until the next service (12:04, 1:02:15, 2d 3h)' },
+		schedule_now: { name: 'Schedule — the service running now, and when it ends' },
+		schedule_skipping: { name: 'Schedule — the service being skipped' },
 
 		// Decoder — the campus, either from the plugin or from a player.
 		decoder_state: { name: 'Decoder — room state (Unknown/Offline/Live/Ended/Interrupted)' },
@@ -98,6 +111,7 @@ export function UpdateVariables(self: ModuleInstance): void {
 export function UpdateVariableValues(self: ModuleInstance): void {
 	const enc = self.encoderStatus
 	const dec = self.decoderStatus
+	const sched = self.isConnected ? self.schedule : null
 
 	const values: CompanionVariableValues = {
 		encoder_live: yesNo(enc.live),
@@ -123,6 +137,10 @@ export function UpdateVariableValues(self: ModuleInstance): void {
 
 		shape: self.shape,
 		temperature: self.isConnected && typeof self.boxSystem?.temp_c === 'number' ? self.boxSystem.temp_c.toFixed(0) : '',
+		schedule_next: sched?.next ? [sched.next.name, sched.next.start].filter(Boolean).join(', ') : '',
+		schedule_next_in: sched?.next ? formatCountdown(sched.next.start_unix - Date.now() / 1000) : '',
+		schedule_now: sched?.now ? `${sched.now.name || 'Service'} until ${sched.now.until}` : '',
+		schedule_skipping: sched?.skipping ?? '',
 
 		// A campus player does not publish `have_source` — it is always meant to
 		// be playing — so an absent one reads as "yes" rather than as a fault.

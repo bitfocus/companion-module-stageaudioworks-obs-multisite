@@ -120,6 +120,8 @@ other site carrying that box's site name.
   nothing to talk to.
 - A **campus player** appliance, if you are pointing at one of those instead.
   Any release that serves its HTTP API will do — that is all of them.
+- An **Outpost box**, MultisiteOS 0.2.45 or later for its schedule, and 0.2.69
+  or later to skip a service from a button.
 
 ## License
 

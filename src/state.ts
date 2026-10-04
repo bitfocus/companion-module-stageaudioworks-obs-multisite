@@ -48,6 +48,16 @@ export function formatDuration(seconds: number | undefined): string {
 	return `${minutes}:${ss}`
 }
 
+/**
+ * Time left until something starts: `12:04`, `1:02:15`, and from a day out
+ * `1d 2h`, because nobody reads a hundred-hour clock.
+ */
+export function formatCountdown(seconds: number | undefined): string {
+	if (seconds === undefined || !Number.isFinite(seconds)) return ''
+	if (seconds < 86_400) return formatDuration(Math.max(0, seconds))
+	return `${Math.floor(seconds / 86_400)}d ${Math.floor((seconds % 86_400) / 3600)}h`
+}
+
 /** A wall-clock instant, from the plugin's epoch milliseconds, as `HH:MM:SS`. */
 export function formatClockTime(epochMs: number | undefined): string {
 	if (!epochMs || epochMs <= 0 || !Number.isFinite(epochMs)) return ''

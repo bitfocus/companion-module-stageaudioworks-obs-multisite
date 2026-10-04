@@ -7,6 +7,7 @@ import type {
 	DecoderStatus,
 	EncoderStatus,
 	EventsResponse,
+	BoxSchedule,
 	BoxShape,
 	BoxSystem,
 	ModuleConfig,
@@ -93,6 +94,16 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	/** An Outpost box's temperature and throttle point, when its page reports them. */
 	get boxSystem(): BoxSystem | null {
 		return this.transport instanceof OutpostTransport ? this.transport.system : null
+	}
+
+	/** An Outpost encoder's schedule, when its box has one. */
+	get schedule(): BoxSchedule | null {
+		return this.transport instanceof OutpostTransport ? this.transport.schedule : null
+	}
+
+	/** The schedule's buttons: an Outpost box in its encoder shape. */
+	get offersSchedule(): boolean {
+		return this.isOutpost && this.offersEncoder
 	}
 
 	/** Whether the far end is answering now. */
@@ -351,6 +362,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		if (this.destroyed) return
 		this.publishVariables()
 		this.checkFeedbacks('running_hot')
+		if (this.offersSchedule) this.checkFeedbacks('schedule_running', 'schedule_soon', 'schedule_skipped')
 	}
 
 	private handleStateEvent(half: 'encoder' | 'decoder', data: JsonObject): void {
@@ -427,6 +439,9 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		// to check a definition that does not exist is a warning every second.
 		if (this.offersEncoder) this.checkFeedbacks('encoder_live', 'encoder_link_health')
 		if (this.isOutpost && this.offersEncoder) this.checkFeedbacks('web_landing', 'checking_input', 'sound_present')
+		// The countdown moves with the clock, not with the schedule: this
+		// document arrives every second, so "starting soon" is checked with it.
+		if (this.offersSchedule) this.checkFeedbacks('schedule_soon')
 		// The main site's marker labels arrive with this document, and the
 		// "Drop a marker" list is built from them.
 		this.rebuildIfChoicesChanged()
@@ -461,6 +476,21 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			this.events = { error: 'could not read the recordings list' }
 		}
 		return this.events
+	}
+
+	/**
+	 * Skip the next scheduled service, or undo the skip. The box answers with
+	 * the schedule, which the transport takes, so the button relights at once.
+	 */
+	async skipNextService(skip: boolean): Promise<void> {
+		if (!this.transport) return
+		const res = await this.transport.call('schedule/skip', { skip })
+		if (typeof res.error === 'string' && res.error !== '') {
+			this.log('warn', `${skip ? 'skipping the next service' : 'undoing the skip'} refused: ${res.error}`)
+			return
+		}
+		const what = this.schedule?.skipping
+		this.log('info', skip ? `skipping ${what || 'the next service'}` : 'no scheduled service is skipped')
 	}
 
 	/**

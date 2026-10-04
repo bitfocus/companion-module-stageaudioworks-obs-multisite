@@ -12,6 +12,7 @@
 //
 import type { CompanionFeedbackDefinitions } from '@companion-module/base'
 import type ModuleInstance from './main.js'
+import type { BoxSchedule } from './types.js'
 
 type NoOptions = Record<string, never>
 
@@ -32,6 +33,9 @@ export type FeedbacksSchema = {
 	sound_present: { type: 'boolean'; options: NoOptions }
 	box_offline: { type: 'boolean'; options: NoOptions }
 	running_hot: { type: 'boolean'; options: { margin: number } }
+	schedule_running: { type: 'boolean'; options: NoOptions }
+	schedule_soon: { type: 'boolean'; options: { minutes: number } }
+	schedule_skipped: { type: 'boolean'; options: NoOptions }
 }
 
 /**
@@ -42,6 +46,16 @@ export function soundPresent(audio: { receiving?: boolean; live?: boolean; peak_
 	if (!audio) return false
 	if (audio.receiving === true) return true
 	return audio.live === true && typeof audio.peak_dbfs === 'number' && audio.peak_dbfs > -60
+}
+
+/**
+ * The next scheduled service starts within this many minutes. Exported for
+ * the spec, with the time passed in.
+ */
+export function startsWithin(schedule: BoxSchedule | null, minutes: number, nowMs = Date.now()): boolean {
+	if (!schedule?.next) return false
+	const left = schedule.next.start_unix - nowMs / 1000
+	return left > 0 && left <= minutes * 60
 }
 
 /**
@@ -247,6 +261,31 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			options: [{ id: 'margin', type: 'number', label: 'Within (°C)', default: 10, min: 0, max: 50, step: 1 }],
 			callback: (feedback) => runningHot(self.boxSystem, Number(feedback.options.margin ?? 10)),
 		},
+
+		schedule_running: {
+			name: 'Schedule: a scheduled service is running',
+			description: 'Inside a service’s window on the box’s schedule, its preroll included.',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x00aa00, color: 0xffffff },
+			options: [],
+			callback: () => self.isConnected && self.schedule?.now != null,
+		},
+
+		schedule_soon: {
+			name: 'Schedule: the next service starts soon',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0xff9900, color: 0x000000 },
+			options: [{ id: 'minutes', type: 'number', label: 'Within (minutes)', default: 10, min: 1, max: 240, step: 1 }],
+			callback: (feedback) => self.isConnected && startsWithin(self.schedule, Number(feedback.options.minutes ?? 10)),
+		},
+
+		schedule_skipped: {
+			name: 'Schedule: the next service is skipped',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x663399, color: 0xffffff },
+			options: [],
+			callback: () => self.isConnected && (self.schedule?.skipping ?? '') !== '',
+		},
 	}
 
 	// As with the actions: what the end cannot have, it is not offered.
@@ -258,6 +297,11 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		feedbacks.web_landing = undefined
 		feedbacks.checking_input = undefined
 		feedbacks.sound_present = undefined
+	}
+	if (!self.offersSchedule) {
+		feedbacks.schedule_running = undefined
+		feedbacks.schedule_soon = undefined
+		feedbacks.schedule_skipped = undefined
 	}
 	if (!self.offersDecoder) {
 		const all = feedbacks as Record<string, unknown>

@@ -51,6 +51,11 @@ player only ever receives, so these are not offered against one.
 - **Check the input** _(Outpost only)_ — show the picture and the sound on the
   box for up to five minutes without recording or streaming anything. Start,
   stop, or toggle.
+- **Schedule: Skip the next service** _(Outpost encoder)_ — the box's own
+  schedule will not start its next service. Skip, undo the skip, or toggle.
+  Setting the service times stays on the box's page, behind its PIN. Needs
+  MultisiteOS 0.2.69 or later; an older box refuses it, and the log says to
+  update the box.
 
 **Campus (decoder)**
 
@@ -99,6 +104,8 @@ does not yet.
 - **Decoder: more than N seconds behind live**
 - **Decoder: the link is degraded or offline**
 - **Decoder: the controls are locked**
+- **Schedule: a scheduled service is running / the next service starts within
+  N minutes (10 by default) / the next service is skipped** _(Outpost encoder)_
 - **Outpost: the box is not answering**
 - **Outpost: the box is running hot** — within a margin (10 °C by default) of
   the temperature at which the box slows itself down, which it reports itself,
@@ -118,6 +125,12 @@ Encoder _(OBS, Outpost encoder)_: `encoder_live`, `encoder_status`, `encoder_eve
 _Streaming_, _Connecting_, _Waiting for a picture_ or _Checking the input_.
 
 Outpost: `shape` (decoder or encoder) and `temperature`.
+
+Schedule _(Outpost encoder)_: `schedule_next` (_Sunday Service, Sun 11 Oct
+10:30_), `schedule_next_in` (_12:04_, _1:02:15_, _2d 3h_), `schedule_now`
+(_Sunday Service until 12:15_) and `schedule_skipping`. All blank on a box with
+nothing scheduled, or from before MultisiteOS 0.2.45, which has no schedule.
+The times are in the schedule's own time zone, as the box shows them.
 
 Decoder: `decoder_state`, `decoder_have_source`, `decoder_playing`,
 `decoder_held`, `decoder_buffering`, `decoder_loading`, `decoder_ended`,
@@ -140,7 +153,9 @@ is offered against a campus player, with Hold or resume and Lock added.
 Against an Outpost box the banks are **Outpost: encoder** or **Outpost: campus**,
 whichever shape it is. The encoder bank adds Check the input, whether the web
 stream is landing, and whether sound is arriving; both status buttons turn red
-when the box stops answering.
+when the box stops answering. Its **Schedule** group has the next service
+counting down (amber within ten minutes, green while one runs) and a Skip next
+button that lights while a skip is set.
 
 Under each bank there is also a **Markers** group (main site) or a **Cues** group
 (campus) with one button per cue, already named: _Sermon Start_, _Offering_, and

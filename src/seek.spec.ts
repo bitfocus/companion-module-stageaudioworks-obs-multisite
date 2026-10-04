@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { timeOfDayToMedia } from './state.js'
-import { runningHot, soundPresent } from './feedbacks.js'
+import { runningHot, soundPresent, startsWithin } from './feedbacks.js'
 
 const H = 3600_000
 const at = (h: number, m = 0) => h * 3600 + m * 60
@@ -77,5 +77,18 @@ describe('runningHot', () => {
 		expect(runningHot({ temp_c: 50, throttle_c: 75, throttling: true }, 10)).toBe(true)
 		expect(runningHot({ temp_c: 70, throttle_c: null }, 10)).toBe(false)
 		expect(runningHot(null, 10)).toBe(false)
+	})
+})
+
+describe('startsWithin', () => {
+	const next = { name: 'Sunday Service', start: 'Sun 11 Oct 10:30', start_unix: 10_000 }
+	it('lights from N minutes before the next service until it starts', () => {
+		expect(startsWithin({ next, now: null, skipping: '' }, 10, (10_000 - 601) * 1000)).toBe(false)
+		expect(startsWithin({ next, now: null, skipping: '' }, 10, (10_000 - 600) * 1000)).toBe(true)
+		expect(startsWithin({ next, now: null, skipping: '' }, 10, 10_000 * 1000)).toBe(false)
+	})
+	it('is dark with nothing scheduled, or no schedule', () => {
+		expect(startsWithin({ next: null, now: null, skipping: '' }, 10, 0)).toBe(false)
+		expect(startsWithin(null, 10, 0)).toBe(false)
 	})
 })

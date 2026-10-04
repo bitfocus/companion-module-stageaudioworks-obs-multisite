@@ -165,6 +165,19 @@ export interface DecoderStatus {
 	plays_as_recording?: boolean
 }
 
+/**
+ * An Outpost encoder's weekly schedule (its page's /api/schedule), as far as a
+ * button needs it: the next service, the one running now, and which is being
+ * skipped. Times are the box's own words, in the schedule's time zone.
+ */
+export interface BoxSchedule {
+	next: { name: string; start: string; start_unix: number } | null
+	/** Inside a service's window, its preroll included. `until` is HH:MM. */
+	now: { name: string; until: string; until_unix: number } | null
+	/** The service "Skip next" has named, in words; '' when none. */
+	skipping: string
+}
+
 /** An Outpost box's CPU, memory and temperature (its page's /api/system). */
 export interface BoxSystem {
 	cpu?: number
