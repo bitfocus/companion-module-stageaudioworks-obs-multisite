@@ -7,6 +7,8 @@ import type {
 	DecoderStatus,
 	EncoderStatus,
 	EventsResponse,
+	BoxShape,
+	BoxSystem,
 	ModuleConfig,
 	ModuleSecrets,
 } from './types.js'
@@ -14,6 +16,7 @@ import { defaultPortFor } from './transport.js'
 import type { Transport, TransportEvents } from './transport.js'
 import { ObsTransport } from './transport-obs.js'
 import { ApplianceTransport } from './transport-appliance.js'
+import { OutpostTransport } from './transport-outpost.js'
 import { UpdateActions, type ActionsSchema } from './actions.js'
 import { UpdateFeedbacks, type FeedbacksSchema } from './feedbacks.js'
 import { UpdateVariables, UpdateVariableValues } from './variables.js'
@@ -68,12 +71,52 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 
 	/** What this connection is pointed at. */
 	get connectionType(): ConnectionType {
-		return this.config?.connection_type === 'appliance' ? 'appliance' : 'obs'
+		const kind = this.config?.connection_type
+		return kind === 'appliance' || kind === 'outpost' ? kind : 'obs'
 	}
 
-	/** True when this is OBS with the plugin — the only end with an encoder half. */
+	/** True when this is OBS with the plugin. */
 	get isObs(): boolean {
 		return this.connectionType === 'obs'
+	}
+
+	/** True when this is an Outpost box, which is one shape or the other. */
+	get isOutpost(): boolean {
+		return this.connectionType === 'outpost'
+	}
+
+	/** An Outpost box's shape, as it last said; '' for anything else or until it has. */
+	get shape(): BoxShape {
+		return this.transport instanceof OutpostTransport ? this.transport.shape : ''
+	}
+
+	/** An Outpost box's temperature and throttle point, when its page reports them. */
+	get boxSystem(): BoxSystem | null {
+		return this.transport instanceof OutpostTransport ? this.transport.system : null
+	}
+
+	/** Whether the far end is answering now. */
+	get isConnected(): boolean {
+		return this.transport?.isConnected ?? false
+	}
+
+	/**
+	 * Whether to offer the main site's controls: OBS always, an Outpost box in
+	 * its encoder shape. A campus player never — a button that can only be
+	 * refused is worse than no button.
+	 */
+	get offersEncoder(): boolean {
+		return this.isObs || (this.isOutpost && this.shape === 'encoder')
+	}
+
+	/** And the campus's: everything but an Outpost box in its encoder shape. */
+	get offersDecoder(): boolean {
+		return !(this.isOutpost && this.shape === 'encoder')
+	}
+
+	/** The player's own controls (its lock, hold-or-continue), which the plugin has no request for. */
+	get offersPlayerOnly(): boolean {
+		return !this.isObs && this.offersDecoder
 	}
 
 	async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
@@ -145,8 +188,12 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			onConnected: () => this.handleConnected(),
 			onDisconnected: (reason) => this.handleDisconnected(reason),
 			onStateEvent: (half, data) => this.handleStateEvent(half, data),
+			onShapeChanged: () => this.handleShapeChanged(),
+			onBoxInfo: () => this.handleBoxInfo(),
 		}
-		return kind === 'appliance' ? new ApplianceTransport(events) : new ObsTransport(events)
+		if (kind === 'appliance') return new ApplianceTransport(events)
+		if (kind === 'outpost') return new OutpostTransport(events)
+		return new ObsTransport(events)
 	}
 
 	/**
@@ -252,7 +299,15 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	private handleConnected(): void {
 		this.reconnectDelayMs = 1000
 		this.updateStatus(InstanceStatus.Ok)
-		this.log('info', this.isObs ? 'connected to OBS' : 'connected to the campus player')
+		this.log(
+			'info',
+			this.isObs
+				? 'connected to OBS'
+				: this.isOutpost
+					? `connected to the Outpost box, a ${this.shape || 'decoder'}`
+					: 'connected to the campus player',
+		)
+		if (this.isOutpost) this.checkFeedbacks('box_offline', 'running_hot')
 		void this.refreshAll()
 		// The recordings list is not in the status document, so it is asked for
 		// once here — otherwise the "Load a recording" list stays empty until
@@ -266,8 +321,36 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		if (this.destroyed) return
 		this.log('warn', `disconnected: ${reason}`)
 		this.updateStatus(InstanceStatus.ConnectionFailure, reason)
+		if (this.isOutpost) {
+			this.checkFeedbacks('box_offline')
+			this.publishVariables()
+		}
 		this.clearTimers()
 		this.scheduleReconnect()
+	}
+
+	/**
+	 * An Outpost box is now the other shape — somebody changed it on its page.
+	 * Its last shape's state means nothing now, and the buttons on offer
+	 * change with it.
+	 */
+	private handleShapeChanged(): void {
+		if (this.destroyed) return
+		this.encoderStatus = {}
+		this.decoderStatus = {}
+		this.events = {}
+		this.hasEncoder = false
+		this.hasDecoder = false
+		this.log('info', `the Outpost box is a ${this.shape}`)
+		this.refreshDefinitions()
+		void this.refreshAll()
+		if (this.offersDecoder && this.isConnected) void this.fetchEvents()
+	}
+
+	private handleBoxInfo(): void {
+		if (this.destroyed) return
+		this.publishVariables()
+		this.checkFeedbacks('running_hot')
 	}
 
 	private handleStateEvent(half: 'encoder' | 'decoder', data: JsonObject): void {
@@ -301,7 +384,8 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	 */
 	async refreshAll(): Promise<void> {
 		if (!this.transport?.isConnected) return
-		const jobs: Promise<void>[] = [this.refreshDecoder()]
+		const jobs: Promise<void>[] = []
+		if (this.transport.hasDecoderHalf) jobs.push(this.refreshDecoder())
 		if (this.transport.hasEncoderHalf) jobs.push(this.refreshEncoder())
 		await Promise.allSettled(jobs)
 	}
@@ -341,7 +425,8 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		this.publishVariables()
 		// An appliance has no encoder feedbacks registered, and asking Companion
 		// to check a definition that does not exist is a warning every second.
-		if (this.isObs) this.checkFeedbacks('encoder_live', 'encoder_link_health')
+		if (this.offersEncoder) this.checkFeedbacks('encoder_live', 'encoder_link_health')
+		if (this.isOutpost && this.offersEncoder) this.checkFeedbacks('web_landing', 'checking_input', 'sound_present')
 		// The main site's marker labels arrive with this document, and the
 		// "Drop a marker" list is built from them.
 		this.rebuildIfChoicesChanged()
@@ -359,6 +444,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			'decoder_ended',
 			'decoder_behind_live',
 			'decoder_link_health',
+			'decoder_locked',
 		)
 		// Markers arrive with this document — a cue the main site has just
 		// dropped is a new button to offer.

@@ -26,6 +26,36 @@ export type FeedbacksSchema = {
 	decoder_ended: { type: 'boolean'; options: NoOptions }
 	decoder_behind_live: { type: 'boolean'; options: { seconds: number } }
 	decoder_link_health: { type: 'boolean'; options: { state: string } }
+	decoder_locked: { type: 'boolean'; options: NoOptions }
+	web_landing: { type: 'boolean'; options: NoOptions }
+	checking_input: { type: 'boolean'; options: NoOptions }
+	sound_present: { type: 'boolean'; options: NoOptions }
+	box_offline: { type: 'boolean'; options: NoOptions }
+	running_hot: { type: 'boolean'; options: { margin: number } }
+}
+
+/**
+ * Sound is arriving at an Outpost encoder: its AES67 receiver says so, or its
+ * programme peaks are above silence. Exported for the spec.
+ */
+export function soundPresent(audio: { receiving?: boolean; live?: boolean; peak_dbfs?: number } | undefined): boolean {
+	if (!audio) return false
+	if (audio.receiving === true) return true
+	return audio.live === true && typeof audio.peak_dbfs === 'number' && audio.peak_dbfs > -60
+}
+
+/**
+ * The box is at or near the temperature where its kernel slows it down, or is
+ * already slowing it down. Exported for the spec.
+ */
+export function runningHot(
+	system: { temp_c?: number | null; throttle_c?: number | null; throttling?: boolean } | null,
+	margin: number,
+): boolean {
+	if (!system) return false
+	if (system.throttling === true) return true
+	if (typeof system.temp_c !== 'number' || typeof system.throttle_c !== 'number') return false
+	return system.temp_c >= system.throttle_c - margin
 }
 
 const LINK_CHOICES = [
@@ -165,13 +195,77 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 					String(feedback.options.state ?? ''),
 				),
 		},
+
+		decoder_locked: {
+			name: 'Decoder: the controls are locked',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x663399, color: 0xffffff },
+			options: [],
+			callback: () => self.decoderStatus.locked === true,
+		},
+
+		web_landing: {
+			name: 'Outpost encoder: the web stream is landing',
+			description: 'Web mode: the stream is being sent and the far end is taking it.',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x00aa00, color: 0xffffff },
+			options: [],
+			callback: () => self.encoderStatus.web?.state === 'sending',
+		},
+
+		checking_input: {
+			name: 'Outpost encoder: checking the input',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x0066cc, color: 0xffffff },
+			options: [],
+			callback: () => self.encoderStatus.state === 'checking',
+		},
+
+		sound_present: {
+			name: 'Outpost encoder: sound is arriving',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x00aa00, color: 0xffffff },
+			options: [],
+			callback: () => soundPresent(self.encoderStatus.audio),
+		},
+
+		box_offline: {
+			name: 'Outpost: the box is not answering',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0x880000, color: 0xffffff },
+			options: [],
+			callback: () => !self.isConnected,
+		},
+
+		running_hot: {
+			name: 'Outpost: the box is running hot',
+			description:
+				'Within a margin of the temperature where the box slows itself down, or already slowing down. ' +
+				'The throttle point is the box’s own (75 °C on a ROCK 5B).',
+			type: 'boolean',
+			defaultStyle: { bgcolor: 0xff9900, color: 0x000000 },
+			options: [{ id: 'margin', type: 'number', label: 'Within (°C)', default: 10, min: 0, max: 50, step: 1 }],
+			callback: (feedback) => runningHot(self.boxSystem, Number(feedback.options.margin ?? 10)),
+		},
 	}
 
-	// As with the actions: an appliance has no encoder, so there is no reading
-	// for a button to light up about.
-	if (!self.isObs) {
+	// As with the actions: what the end cannot have, it is not offered.
+	if (!self.offersEncoder) {
 		feedbacks.encoder_live = undefined
 		feedbacks.encoder_link_health = undefined
+	}
+	if (!(self.isOutpost && self.offersEncoder)) {
+		feedbacks.web_landing = undefined
+		feedbacks.checking_input = undefined
+		feedbacks.sound_present = undefined
+	}
+	if (!self.offersDecoder) {
+		const all = feedbacks as Record<string, unknown>
+		for (const id of Object.keys(all)) if (id.startsWith('decoder_')) all[id] = undefined
+	}
+	if (!self.isOutpost) {
+		feedbacks.box_offline = undefined
+		feedbacks.running_hot = undefined
 	}
 
 	self.setFeedbackDefinitions(feedbacks)

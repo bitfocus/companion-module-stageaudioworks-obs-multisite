@@ -14,6 +14,7 @@
 import type { CompanionActionDefinitions, JsonObject } from '@companion-module/base'
 import type ModuleInstance from './main.js'
 import type { DecoderMarker, EventEntry } from './types.js'
+import { formatDuration, timeOfDayToMedia } from './state.js'
 
 type NoOptions = Record<string, never>
 
@@ -21,6 +22,7 @@ export type ActionsSchema = {
 	encoder_go_live: { options: { event_name: string } }
 	encoder_end: { options: NoOptions }
 	encoder_marker: { options: { label: string } }
+	encoder_check_input: { options: { mode: string } }
 	decoder_play: { options: NoOptions }
 	decoder_stop: { options: NoOptions }
 	decoder_hold: { options: NoOptions }
@@ -34,6 +36,8 @@ export type ActionsSchema = {
 	decoder_cue: { options: { label: string } }
 	decoder_load_event: { options: { event_id: string } }
 	decoder_refresh_recordings: { options: NoOptions }
+	decoder_lock: { options: { mode: string } }
+	decoder_toggle: { options: NoOptions }
 	vendor_request: { options: { request: string; data: string } }
 }
 
@@ -108,7 +112,9 @@ export function UpdateActions(self: ModuleInstance): void {
 		// ── The main site ────────────────────────────────────────────────────
 		encoder_go_live: {
 			name: 'Encoder: Go live',
-			description: 'Start sending. Leave the name blank to name it with the current time, as the dock does.',
+			description: self.isOutpost
+				? 'Start the event: recording in Multisite mode, streaming in web mode. The box names the event itself; the name here is not used.'
+				: 'Start sending. Leave the name blank to name it with the current time, as the dock does.',
 			options: [
 				{
 					id: 'event_name',
@@ -131,8 +137,36 @@ export function UpdateActions(self: ModuleInstance): void {
 			},
 		},
 
+		encoder_check_input: {
+			name: 'Encoder: Check the input',
+			description:
+				'Show the picture and the sound on the box for up to five minutes without recording or streaming anything.',
+			options: [
+				{
+					id: 'mode',
+					type: 'dropdown',
+					label: 'Do',
+					default: 'toggle',
+					choices: [
+						{ id: 'toggle', label: 'Start, or stop if it is checking' },
+						{ id: 'start', label: 'Start checking' },
+						{ id: 'stop', label: 'Stop checking' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const mode = String(event.options.mode ?? 'toggle')
+				const checking = self.encoderStatus.state === 'checking'
+				const stop = mode === 'stop' || (mode === 'toggle' && checking)
+				await self.command(stop ? 'encoder/check-stop' : 'encoder/check-start', {}, 'encoder')
+			},
+		},
+
 		encoder_marker: {
 			name: 'Encoder: Drop a marker',
+			description: self.isOutpost
+				? 'An Outpost encoder cannot drop a marker yet; the button says so in the log.'
+				: undefined,
 			options: [
 				{
 					id: 'label',
@@ -219,7 +253,10 @@ export function UpdateActions(self: ModuleInstance): void {
 
 		decoder_seek: {
 			name: 'Decoder: Seek to a time of day',
-			description: 'Go to a clock time within the recording, counted from midnight (seconds).',
+			description: self.isObs
+				? 'Go to a clock time within the recording, counted from midnight (seconds).'
+				: 'Go to a clock time within the programme, counted from midnight (seconds), in the time zone of the ' +
+					'computer running Companion. A time outside the programme goes to its start or its live edge.',
 			options: [
 				{
 					id: 'seconds',
@@ -232,7 +269,27 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
-				await self.command('decoder/seek', { ms: Math.round(Number(event.options.seconds ?? 0) * 1000) })
+				const seconds = Number(event.options.seconds ?? 0)
+				// The plugin's seek takes a time of day; a player's takes media
+				// time, from the start of the programme (companion-module#1).
+				if (self.isObs) {
+					await self.command('decoder/seek', { ms: Math.round(seconds * 1000) })
+					return
+				}
+				const plan = timeOfDayToMedia(seconds, self.decoderStatus)
+				const clock = formatDuration(seconds)
+				if (!plan) {
+					self.log(
+						'warn',
+						`Seek to ${clock}: the player has not said when this programme started, so there is no knowing where ${clock} is in it`,
+					)
+					return
+				}
+				if (plan.clamped === 'before')
+					self.log('warn', `Seek to ${clock}: that is before the programme started; going to its start`)
+				if (plan.clamped === 'after')
+					self.log('warn', `Seek to ${clock}: that is after the live edge; going to the live edge`)
+				await self.command('decoder/seek', { ms: plan.ms })
 			},
 		},
 
@@ -326,6 +383,39 @@ export function UpdateActions(self: ModuleInstance): void {
 			},
 		},
 
+		decoder_lock: {
+			name: 'Decoder: Lock the controls',
+			description:
+				'The player’s own lock: while it is on, every control refuses, on its page and on this surface alike, until it is unlocked.',
+			options: [
+				{
+					id: 'mode',
+					type: 'dropdown',
+					label: 'Do',
+					default: 'toggle',
+					choices: [
+						{ id: 'toggle', label: 'Lock, or unlock if locked' },
+						{ id: 'on', label: 'Lock' },
+						{ id: 'off', label: 'Unlock' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const mode = String(event.options.mode ?? 'toggle')
+				const on = mode === 'on' || (mode === 'toggle' && self.decoderStatus.locked !== true)
+				await self.command('decoder/lock', { on: on ? 1 : 0 })
+			},
+		},
+
+		decoder_toggle: {
+			name: 'Decoder: Hold or resume',
+			description: 'Hold if it is playing, resume if it is held: one button for both.',
+			options: [],
+			callback: async () => {
+				await self.command('decoder/toggle')
+			},
+		},
+
 		// ── The escape hatch ─────────────────────────────────────────────────
 		vendor_request: {
 			name: 'Any obs-multisite request',
@@ -370,13 +460,24 @@ export function UpdateActions(self: ModuleInstance): void {
 		},
 	}
 
-	// An appliance is a receiver. Offering it "Go live", "End" or a marker
-	// button would be offering buttons whose only possible outcome is a
-	// refusal, which is worse than not offering them.
-	if (!self.isObs) {
+	// A campus player is a receiver, and an Outpost box is one shape at a time.
+	// Offering "Go live" to a receiver, or "Hold" to an encoder, would be
+	// offering buttons whose only possible outcome is a refusal, which is worse
+	// than not offering them.
+	if (!self.offersEncoder) {
 		actions.encoder_go_live = undefined
 		actions.encoder_end = undefined
 		actions.encoder_marker = undefined
+	}
+	if (!(self.isOutpost && self.offersEncoder)) actions.encoder_check_input = undefined
+	if (!self.offersDecoder) {
+		const all = actions as Record<string, unknown>
+		for (const id of Object.keys(all)) if (id.startsWith('decoder_')) all[id] = undefined
+	}
+	// The player's own two: the plugin has no request for either.
+	if (!self.offersPlayerOnly) {
+		actions.decoder_lock = undefined
+		actions.decoder_toggle = undefined
 	}
 
 	self.setActionDefinitions(actions)

@@ -17,9 +17,12 @@ connection is added:
   the encoder's side of a feed being received there.
 - **A satellite**, where the campus player appliance runs on its own box. It has
   no OBS at all, so the module talks to it over its own HTTP interface instead.
+- **An Outpost box** (MultisiteOS), as a campus decoder or a main-site encoder,
+  through the box's own page on port 80. It needs no PIN, and the module follows
+  the box if it changes shape.
 
 Everything else — the buttons, the lights, the variables, the presets — is the
-same either way, because both ends offer the same controls.
+same whichever it is, because every end offers the same controls.
 
 ## Status
 
@@ -120,9 +123,9 @@ other site carrying that box's site name.
 
 ## License
 
-The module source is **MIT** — a requirement of the Companion module store,
-which keeps modules portable. The module is distributed under
-**GPL-3.0-only**, declared in `companion/manifest.json`, matching the licence of
-[obs-multisite](https://github.com/stageaudioworks/obs-multisite) itself.
+**MIT**, the source and the module alike, as `package.json` and
+`companion/manifest.json` both declare. It talks to
+[obs-multisite](https://github.com/stageaudioworks/obs-multisite) (GPL-3.0) and
+to an Outpost box only over the network, and contains none of their code.
 
 See [LICENSE](./LICENSE).

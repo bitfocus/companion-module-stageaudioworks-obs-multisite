@@ -25,6 +25,7 @@ export class ObsTransport implements Transport {
 	/** Events carry the news here, so this is only the safety net. */
 	readonly pollIntervalMs = 5000
 	readonly hasEncoderHalf = true
+	readonly hasDecoderHalf = true
 
 	private readonly ws = new OBSWebSocket()
 	private readonly events: TransportEvents

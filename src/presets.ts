@@ -59,6 +59,38 @@ export function UpdatePresets(self: ModuleInstance): void {
 		feedbacks: [{ feedbackId: 'encoder_live', options: {}, style: { bgcolor: 0xcc0000, color: 0xffffff } }],
 	}
 
+	// An Outpost encoder's own: checking the input before a service, whether a
+	// web stream is landing, and whether sound is arriving.
+	presets['encoder_check_input'] = {
+		type: 'simple',
+		name: 'Encoder: Check the input',
+		style: style('CHECK\\nINPUT', 0x333333),
+		steps: [{ down: [{ actionId: 'encoder_check_input', options: { mode: 'toggle' } }], up: [] }],
+		feedbacks: [{ feedbackId: 'checking_input', options: {}, style: { bgcolor: 0x0066cc, color: 0xffffff } }],
+	}
+
+	presets['encoder_web_landing'] = {
+		type: 'simple',
+		name: 'Encoder: the web stream is landing',
+		style: {
+			text: 'WEB\\n$(obs-multisite:encoder_web_speed)',
+			size: 'auto',
+			color: 0xffffff,
+			bgcolor: 0x333333,
+			show_topbar: false,
+		},
+		steps: [{ down: [], up: [] }],
+		feedbacks: [{ feedbackId: 'web_landing', options: {}, style: { bgcolor: 0x00aa00, color: 0xffffff } }],
+	}
+
+	presets['encoder_sound'] = {
+		type: 'simple',
+		name: 'Encoder: sound is arriving',
+		style: style('SOUND', 0x550000),
+		steps: [{ down: [], up: [] }],
+		feedbacks: [{ feedbackId: 'sound_present', options: {}, style: { bgcolor: 0x00aa00, color: 0xffffff } }],
+	}
+
 	// ── Decoder ──────────────────────────────────────────────────────────────
 	presets['decoder_play'] = {
 		type: 'simple',
@@ -82,6 +114,22 @@ export function UpdatePresets(self: ModuleInstance): void {
 		style: style('RESUME', 0x005500),
 		steps: [{ down: [{ actionId: 'decoder_continue', options: {} }], up: [] }],
 		feedbacks: [],
+	}
+
+	presets['decoder_toggle'] = {
+		type: 'simple',
+		name: 'Decoder: Hold or resume',
+		style: style('HOLD /\\nRESUME', 0x333333),
+		steps: [{ down: [{ actionId: 'decoder_toggle', options: {} }], up: [] }],
+		feedbacks: [{ feedbackId: 'decoder_held', options: {}, style: { bgcolor: 0xffcc00, color: 0x000000 } }],
+	}
+
+	presets['decoder_lock'] = {
+		type: 'simple',
+		name: 'Decoder: Lock the controls',
+		style: style('LOCK', 0x333333),
+		steps: [{ down: [{ actionId: 'decoder_lock', options: { mode: 'toggle' } }], up: [] }],
+		feedbacks: [{ feedbackId: 'decoder_locked', options: {}, style: { bgcolor: 0x663399, color: 0xffffff } }],
 	}
 
 	presets['decoder_catch_up'] = {
@@ -145,6 +193,13 @@ export function UpdatePresets(self: ModuleInstance): void {
 	// what these hold — and the decode action turns a label back into the marker
 	// it names.
 
+	// Either shape's status button says so when the box has stopped answering.
+	if (self.isOutpost) {
+		const offline = { feedbackId: 'box_offline' as const, options: {}, style: { bgcolor: 0x880000, color: 0xffffff } }
+		presets['encoder_status'].feedbacks.push(offline)
+		presets['decoder_status'].feedbacks.push(offline)
+	}
+
 	const encoderLabels = self.encoderStatus.marker_labels ?? []
 	if (self.isObs && encoderLabels.length > 0) {
 		presets['encoder_marker_any'] = {
@@ -201,7 +256,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 	// so a section of buttons that can only refuse is not offered at all — and
 	// the presets it would have referenced are dropped below, because a preset
 	// with no section is still draggable from the presets list.
-	if (self.isObs) {
+	if (self.offersEncoder) {
 		const encoderGroups: CompanionPresetGroup<ModuleSchema>[] = [
 			{
 				id: 'encoder_controls',
@@ -211,6 +266,15 @@ export function UpdatePresets(self: ModuleInstance): void {
 				presets: ['encoder_go_live', 'encoder_end', 'encoder_status'],
 			},
 		]
+		if (self.isOutpost) {
+			encoderGroups.push({
+				id: 'encoder_outpost',
+				type: 'simple',
+				name: 'Before and during',
+				description: 'Check the input without recording, and whether the web stream and the sound are arriving.',
+				presets: ['encoder_check_input', 'encoder_web_landing', 'encoder_sound'],
+			})
+		}
 		if (encoderLabels.length > 0) {
 			encoderGroups.push({
 				id: 'encoder_markers',
@@ -222,7 +286,11 @@ export function UpdatePresets(self: ModuleInstance): void {
 				templateValues: encoderLabels.map((label) => ({ name: label, value: label })),
 			})
 		}
-		structure.push({ id: 'encoder', name: 'Multisite: main site', definitions: encoderGroups })
+		structure.push({
+			id: 'encoder',
+			name: self.isOutpost ? 'Outpost: encoder' : 'Multisite: main site',
+			definitions: encoderGroups,
+		})
 	}
 
 	const decoderGroups: CompanionPresetGroup<ModuleSchema>[] = [
@@ -231,7 +299,14 @@ export function UpdatePresets(self: ModuleInstance): void {
 			type: 'simple',
 			name: 'Transport',
 			description: 'Play, hold and catch up, with the lights already attached.',
-			presets: ['decoder_play', 'decoder_hold', 'decoder_continue', 'decoder_catch_up', 'decoder_return_live'],
+			presets: [
+				'decoder_play',
+				'decoder_hold',
+				'decoder_continue',
+				...(self.offersPlayerOnly ? (['decoder_toggle', 'decoder_lock'] as const) : []),
+				'decoder_catch_up',
+				'decoder_return_live',
+			],
 		},
 		{
 			id: 'decoder_nudge',
@@ -263,12 +338,23 @@ export function UpdatePresets(self: ModuleInstance): void {
 		presets: ['decoder_cue_any'],
 	})
 
-	structure.push({ id: 'decoder', name: 'Multisite: campus', definitions: decoderGroups })
+	if (self.offersDecoder) {
+		structure.push({
+			id: 'decoder',
+			name: self.isOutpost ? 'Outpost: campus' : 'Multisite: campus',
+			definitions: decoderGroups,
+		})
+	}
 
-	if (!self.isObs) {
-		delete presets.encoder_go_live
-		delete presets.encoder_end
-		delete presets.encoder_status
+	// A preset outside every section is still draggable from the list, so what
+	// this end cannot do is taken out of the list as well.
+	for (const id of Object.keys(presets)) {
+		const drop =
+			(id.startsWith('encoder_') && !self.offersEncoder) ||
+			(['encoder_check_input', 'encoder_web_landing', 'encoder_sound'].includes(id) && !self.isOutpost) ||
+			(id.startsWith('decoder_') && !self.offersDecoder) ||
+			(['decoder_toggle', 'decoder_lock'].includes(id) && !self.offersPlayerOnly)
+		if (drop) delete presets[id]
 	}
 
 	self.setPresetDefinitions(structure, presets)

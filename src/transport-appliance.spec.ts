@@ -61,6 +61,16 @@ describe('applianceRequest', () => {
 		})
 	})
 
+	it('locks and unlocks with the player’s on=1 or 0, and toggles hold', () => {
+		expect(applianceRequest('decoder/lock', { on: 1 })).toEqual({
+			method: 'POST',
+			path: '/api/lock',
+			query: { on: '1' },
+		})
+		expect(applianceRequest('decoder/lock', { on: 0 })?.query).toEqual({ on: '0' })
+		expect(applianceRequest('decoder/toggle')).toEqual({ method: 'POST', path: '/api/toggle', query: {} })
+	})
+
 	it('leaves an argument out rather than sending an empty one', () => {
 		expect(applianceRequest('decoder/jog')?.query).toEqual({})
 		// These routes take scalars. Anything else is dropped rather than sent
@@ -99,6 +109,8 @@ describe('applianceOperations', () => {
 				'decoder/return-to-live',
 				'decoder/events',
 				'decoder/events/refresh',
+				'decoder/lock',
+				'decoder/toggle',
 			].sort(),
 		)
 	})

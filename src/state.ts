@@ -74,3 +74,56 @@ export function formatRate(bytesPerSecond: number | undefined): string {
 	const text = formatBytes(bytesPerSecond)
 	return text === '' ? '' : `${text}/s`
 }
+
+/** Where a clock time lands in a programme, as media time. */
+export interface SeekPlan {
+	/** Milliseconds from the programme's start: what a player's seek takes. */
+	ms: number
+	/** Set when the time was outside the programme and was moved to its edge. */
+	clamped: '' | 'before' | 'after'
+}
+
+/**
+ * A clock time on the Companion host — seconds from its local midnight — as a
+ * position in the programme a campus player is playing. The plugin's seek takes
+ * a time of day; a player's takes media time, milliseconds from the start of
+ * the programme, so this is the step between them.
+ *
+ * The programme may cross midnight, so the time is tried on the day before,
+ * the day of and the days after its start, and the latest one inside the
+ * programme wins (a programme longer than a day has a clock time twice; the
+ * later is the one nearer live). A time inside none is moved to whichever edge
+ * is nearer, and says so. `null` when the player has not said when its
+ * programme started, which is the one thing this cannot do without.
+ *
+ * Local dates are built with the Date constructor, not by adding 86 400 000,
+ * so a day with a daylight-saving change is still a day.
+ */
+export function timeOfDayToMedia(
+	secondsFromMidnight: number,
+	status: { started_ms?: number; earliest_ms?: number; live_ms?: number; end_ms?: number; total_ms?: number },
+): SeekPlan | null {
+	const started = status.started_ms
+	if (!started || started <= 0 || !Number.isFinite(started)) return null
+	const first = Math.max(0, status.earliest_ms ?? 0)
+	const last = Math.max(first, status.live_ms ?? 0, status.end_ms ?? 0, status.total_ms ?? 0)
+	const day = new Date(started)
+	const secs = Math.max(0, Math.min(86399, Math.round(secondsFromMidnight)))
+
+	const candidates: number[] = []
+	for (let d = -1; d <= 2; d++) {
+		const at = new Date(day.getFullYear(), day.getMonth(), day.getDate() + d, 0, 0, secs).getTime()
+		candidates.push(at - started)
+	}
+	const inside = candidates.filter((ms) => ms >= first && ms <= last)
+	if (inside.length > 0) return { ms: Math.max(...inside), clamped: '' }
+
+	// Outside the programme: to the nearer edge.
+	let best = { ms: first, clamped: 'before' as 'before' | 'after', distance: Infinity }
+	for (const ms of candidates) {
+		const distance = ms < first ? first - ms : ms - last
+		if (distance < best.distance)
+			best = { ms: ms < first ? first : last, clamped: ms < first ? 'before' : 'after', distance }
+	}
+	return { ms: best.ms, clamped: best.clamped }
+}

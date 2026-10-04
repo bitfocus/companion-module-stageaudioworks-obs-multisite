@@ -6,10 +6,12 @@
 // expect it to keep meaning what it means. They are declared rather than
 // generated, so a typo in a preset is caught rather than silently empty.
 //
-// The encoder's variables are declared only when this connection is pointed at
-// OBS. A campus player never sends an encoder document, and a variable that can
-// never hold anything is worse than one that does not exist: on the variables
-// list it reads as broken.
+// The encoder's variables are declared only where there is an encoder: OBS, or
+// an Outpost box in its encoder shape. A campus player never sends an encoder
+// document, and a variable that can never hold anything is worse than one that
+// does not exist: on the variables list it reads as broken. The same goes for
+// the decoder's on an Outpost encoder, and for the Outpost's own on anything
+// else.
 //
 import type { CompanionVariableValues } from '@companion-module/base'
 
@@ -20,10 +22,25 @@ function yesNo(value: boolean | undefined): string {
 	return value ? 'yes' : 'no'
 }
 
-/** The encoder's names, for dropping on an end that has no encoder. */
-function dropEncoderVariables(values: Record<string, unknown>): void {
+/** Only an Outpost encoder says these. */
+const OUTPOST_ENCODER = [
+	'encoder_mode',
+	'encoder_web_address',
+	'encoder_web_speed',
+	'encoder_web_sent',
+	'encoder_source',
+	'encoder_fps',
+]
+/** And only an Outpost box these, in either shape. */
+const OUTPOST_BOX = ['shape', 'temperature']
+
+/** Drop what this end cannot have. */
+function dropAbsent(self: ModuleInstance, values: Record<string, unknown>): void {
 	for (const key of Object.keys(values)) {
-		if (key.startsWith('encoder_')) delete values[key]
+		if (key.startsWith('encoder_') && !self.offersEncoder) delete values[key]
+		else if (key.startsWith('decoder_') && !self.offersDecoder) delete values[key]
+		else if (OUTPOST_ENCODER.includes(key) && !self.isOutpost) delete values[key]
+		else if (OUTPOST_BOX.includes(key) && !self.isOutpost) delete values[key]
 	}
 }
 
@@ -43,6 +60,16 @@ export function UpdateVariables(self: ModuleInstance): void {
 		encoder_link: { name: 'Encoder — link (Healthy / Degraded / Offline)' },
 		encoder_colo: { name: 'Encoder — Cloudflare edge serving the bucket' },
 		encoder_version: { name: 'Encoder — plugin version' },
+		encoder_mode: { name: 'Encoder — mode (multisite / web)' },
+		encoder_web_address: { name: 'Encoder — where the web stream goes' },
+		encoder_web_speed: { name: 'Encoder — web stream speed (1.00× keeps up)' },
+		encoder_web_sent: { name: 'Encoder — web stream sent so far' },
+		encoder_source: { name: 'Encoder — the picture it takes in' },
+		encoder_fps: { name: 'Encoder — frames a second it sends' },
+
+		// An Outpost box's own.
+		shape: { name: 'Outpost — shape (decoder / encoder)' },
+		temperature: { name: 'Outpost — temperature (°C)' },
 
 		// Decoder — the campus, either from the plugin or from a player.
 		decoder_state: { name: 'Decoder — room state (Unknown/Offline/Live/Ended/Interrupted)' },
@@ -63,7 +90,7 @@ export function UpdateVariables(self: ModuleInstance): void {
 		decoder_version: { name: 'Decoder — plugin version' },
 	}
 
-	if (!self.isObs) dropEncoderVariables(definitions)
+	dropAbsent(self, definitions)
 
 	self.setVariableDefinitions(definitions)
 	UpdateVariableValues(self)
@@ -74,7 +101,7 @@ export function UpdateVariableValues(self: ModuleInstance): void {
 
 	const values: CompanionVariableValues = {
 		encoder_live: yesNo(enc.live),
-		encoder_status: enc.live ? 'Live' : 'Idle',
+		encoder_status: enc.status_text ?? (enc.live ? 'Live' : 'Idle'),
 		encoder_event_id: enc.event_id ?? '',
 		encoder_event_name: enc.event_name ?? '',
 		encoder_room: enc.room_id ?? '',
@@ -86,6 +113,16 @@ export function UpdateVariableValues(self: ModuleInstance): void {
 		encoder_link: enc.link_known ? linkHealthText(enc.link_health) : '',
 		encoder_colo: enc.colo ?? '',
 		encoder_version: enc.version ?? '',
+		encoder_mode: enc.mode ?? '',
+		encoder_web_address: enc.web?.address ?? '',
+		encoder_web_speed:
+			typeof enc.web?.speed === 'number' && enc.web.state === 'sending' ? `${enc.web.speed.toFixed(2)}×` : '',
+		encoder_web_sent: enc.web?.state === 'sending' ? formatDuration(enc.web.sent_s) : '',
+		encoder_source: enc.source ?? '',
+		encoder_fps: typeof enc.out_fps === 'number' && enc.out_fps > 0 ? enc.out_fps.toFixed(2) : '',
+
+		shape: self.shape,
+		temperature: self.isConnected && typeof self.boxSystem?.temp_c === 'number' ? self.boxSystem.temp_c.toFixed(0) : '',
 
 		// A campus player does not publish `have_source` — it is always meant to
 		// be playing — so an absent one reads as "yes" rather than as a fault.
@@ -109,7 +146,7 @@ export function UpdateVariableValues(self: ModuleInstance): void {
 		decoder_version: dec.version ?? '',
 	}
 
-	if (!self.isObs) dropEncoderVariables(values)
+	dropAbsent(self, values)
 
 	self.setVariableValues(values)
 }

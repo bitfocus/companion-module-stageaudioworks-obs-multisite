@@ -2,6 +2,28 @@
 
 All notable changes to this module are recorded here.
 
+## [0.4.0]
+
+- **Outpost boxes.** A third connection type, **Outpost (MultisiteOS)**, drives
+  an Outpost box in either of its shapes through the box's own page on port 80,
+  with no PIN. As a campus decoder it has every campus action, feedback,
+  variable and preset. As a main-site encoder it has Go live and End (recording
+  in Multisite mode, streaming in web mode) and a new **Check the input**, with
+  new feedbacks for a web stream landing, checking the input and sound
+  arriving, and variables for the mode, the web stream and the picture. The
+  module follows the box if it changes shape. **The box is not answering** and
+  **the box is running hot** work in either shape, as do `shape` and
+  `temperature`.
+- **Lock the controls** and **Hold or resume** against a campus player and an
+  Outpost box, with a **the controls are locked** feedback.
+- **Seek to a time of day is right on a campus player.** It sent seconds from
+  midnight, which a player reads as a position in the programme, so 10:30 went
+  10½ hours in. The time is now turned into a position in the programme,
+  across midnight too. A time outside the programme goes to its start or its
+  live edge, and the log says so. Unchanged against OBS. (#1)
+- **Licensed MIT throughout.** The manifest declared GPL-3.0-only while the
+  source and `package.json` said MIT; it now says MIT too.
+
 ## [0.3.2]
 
 - **Packaging only, for the Companion module store.** `companion/manifest.json`

@@ -20,6 +20,10 @@ export interface TransportEvents {
 	onDisconnected: (reason: string) => void
 	/** A pushed state change. Only obs-websocket pushes; an appliance is polled. */
 	onStateEvent: (half: 'encoder' | 'decoder', data: JsonObject) => void
+	/** An Outpost box changed shape (or said its shape for the first time). */
+	onShapeChanged?: () => void
+	/** An Outpost box's own readings (its temperature) changed. */
+	onBoxInfo?: () => void
 }
 
 export interface Transport {
@@ -34,6 +38,9 @@ export interface Transport {
 
 	/** Whether this end has an encoder half at all. A campus player never does. */
 	readonly hasEncoderHalf: boolean
+
+	/** Whether it has a decoder half. Only an Outpost box in its encoder shape has none. */
+	readonly hasDecoderHalf: boolean
 
 	readonly isConnected: boolean
 
@@ -52,5 +59,9 @@ export interface Transport {
 
 /** The port to use when the config leaves it at 0. */
 export function defaultPortFor(kind: ConnectionType): number {
-	return kind === 'appliance' ? 8080 : 4455
+	if (kind === 'appliance') return 8080
+	// An Outpost box's page, which is the only way in from the network: its
+	// player and encoder listen on loopback only.
+	if (kind === 'outpost') return 80
+	return 4455
 }

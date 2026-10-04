@@ -3,13 +3,18 @@ import type { JsonObject } from '@companion-module/base'
 /**
  * What this connection is pointed at.
  *
- * The two are the same controls over two different wires: OBS runs the plugin,
- * which answers obs-websocket vendor requests; a campus player appliance has no
- * OBS at all and answers plain HTTP. Everything above the transport — the
- * actions, the feedbacks, the variables, the presets — is written once and
- * works against either.
+ * The same controls over three wires. OBS runs the plugin, which answers
+ * obs-websocket vendor requests. A campus player appliance has no OBS at all
+ * and answers plain HTTP. An Outpost box (MultisiteOS) runs that same player,
+ * or an encoder, behind its own page on port 80, which passes the operator's
+ * controls through. Everything above the transport — the actions, the
+ * feedbacks, the variables, the presets — is written once and works against
+ * any of them.
  */
-export type ConnectionType = 'obs' | 'appliance'
+export type ConnectionType = 'obs' | 'appliance' | 'outpost'
+
+/** Which of its two shapes an Outpost box is in; '' until it has said. */
+export type BoxShape = 'decoder' | 'encoder' | ''
 
 /**
  * The connection fields. The password is deliberately NOT here: it is a
@@ -55,6 +60,52 @@ export interface EncoderStatus {
 	bucket?: string
 	configured?: boolean
 	marker_labels?: string[]
+
+	// An Outpost encoder's own document (multisite-outpost's /api/status).
+	// transport-outpost.ts fills the plugin's names above from it (live,
+	// room_id, confirmed, pending, link_*), so the existing feedbacks and
+	// variables read either; these are what only an Outpost says.
+	/** idle | waiting | recording | stopping | checking */
+	state?: string
+	/** multisite | web */
+	mode?: string
+	message?: string
+	source?: string
+	encoder?: string
+	out_fps?: number
+	started_unix_ms?: number
+	/** The state in a word for a button: Recording, Streaming, Waiting, … */
+	status_text?: string
+	upload?: {
+		configured?: boolean
+		room_id?: string
+		pending?: number
+		confirmed?: number
+		retries?: number
+		bytes?: number
+		/** healthy | degraded | offline */
+		link?: string
+		error?: string
+	}
+	web?: {
+		configured?: boolean
+		address?: string
+		/** stopped | connecting | sending | retrying */
+		state?: string
+		message?: string
+		sent_s?: number
+		speed?: number
+		restarts?: number
+		dropped_s?: number
+	}
+	audio?: {
+		source?: string
+		live?: boolean
+		peak_dbfs?: number
+		receiving?: boolean
+		error?: string
+		ptp?: { known?: boolean; locked?: boolean }
+	}
 }
 
 export interface DecoderMarker {
@@ -110,6 +161,16 @@ export interface DecoderStatus {
 	channel_labels?: string[]
 	markers?: DecoderMarker[]
 	configured?: boolean
+	/** The player's own answer: a recording, not a live feed. Absent from the plugin. */
+	plays_as_recording?: boolean
+}
+
+/** An Outpost box's CPU, memory and temperature (its page's /api/system). */
+export interface BoxSystem {
+	cpu?: number
+	temp_c?: number | null
+	throttle_c?: number | null
+	throttling?: boolean
 }
 
 export interface EventEntry {

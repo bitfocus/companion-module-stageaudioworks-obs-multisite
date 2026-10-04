@@ -22,7 +22,7 @@ import type { JsonObject } from '@companion-module/base'
 import { asJsonObject } from './types.js'
 import type { Transport, TransportEvents } from './transport.js'
 
-interface Route {
+export interface Route {
 	method: 'GET' | 'POST'
 	path: string
 	/** This module's parameter name → the name the player's route expects. */
@@ -31,9 +31,11 @@ interface Route {
 
 /**
  * The appliance's routes, keyed by the command names the plugin uses. Encoder
- * commands are absent on purpose: a player only ever receives.
+ * commands are absent on purpose: a player only ever receives. Exported because
+ * an Outpost box serves this same player's routes behind its own page
+ * (transport-outpost.ts).
  */
-const ROUTES: Record<string, Route> = {
+export const ROUTES: Record<string, Route> = {
 	'decoder/status': { method: 'GET', path: '/api/status' },
 	'decoder/play': { method: 'POST', path: '/api/play' },
 	'decoder/stop': { method: 'POST', path: '/api/stop' },
@@ -49,6 +51,10 @@ const ROUTES: Record<string, Route> = {
 	'decoder/return-to-live': { method: 'POST', path: '/api/follow-live' },
 	'decoder/events': { method: 'GET', path: '/api/events' },
 	'decoder/events/refresh': { method: 'POST', path: '/api/events/refresh' },
+	// The player's own two, which the plugin has no vendor request for: the
+	// operator's lock (on=1 or 0), and hold-or-continue in one press.
+	'decoder/lock': { method: 'POST', path: '/api/lock', query: { on: 'on' } },
+	'decoder/toggle': { method: 'POST', path: '/api/toggle' },
 }
 
 /** The commands an appliance can be given. Exposed so a test can pin the list. */
@@ -99,6 +105,7 @@ export class ApplianceTransport implements Transport {
 	/** Asked, not told: this is the only way the state ever arrives. */
 	readonly pollIntervalMs = 1000
 	readonly hasEncoderHalf = false
+	readonly hasDecoderHalf = true
 
 	private readonly events: TransportEvents
 	private base = ''
